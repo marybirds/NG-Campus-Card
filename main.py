@@ -1,19 +1,8 @@
 from smartcard.System import readers
 from smartcard.util import toHexString
-from smartcard.ATR import ATR
 import requests
-
-reader_list = readers()
-for reader in reader_list:
-    print(reader)
-#reader_id = int(input("enter the reader id"))
-reader = readers()[0]
-connection = reader.createConnection()
-
-connection.connect()
-
-atr = connection.getATR()
-print(toHexString(atr))
+import time
+import os
 
 SUCCESS_SW1 = 0x90
 SUCCESS_SW2 = 0x00
@@ -51,7 +40,7 @@ class MifareClassicPCSC:
         self.authenticate_block(block_number)
         if len(data16) != 16:
             raise ValueError("write_block requires exactly 16 bytes")
-        apdu = [0xFF, 0xD6, 0x00, block_number] + list(data16)
+        apdu = [0xFF, 0xD6, 0x00, block_number, 0x10] + list(data16)
         resp, sw1, sw2 = self.connection.transmit(apdu)
         return self._check_sw(resp, sw1, sw2)
 
@@ -76,9 +65,125 @@ class MifareClassicPCSC:
             blocks.append(padded)
 
         return blocks
-    
-if __name__ == '__main__':
 
+def login_with_smartcard(session_token, email, password, laravel_url="http://localhost"):
+    """
+    Post smartcard credentials to Laravel (CSRF-exempt endpoint)
+    """
+    url = f"{laravel_url}/smartcard/callback"
+    
+    data = {
+        "session_token": session_token,
+        "email": email,
+        "password": password
+    }
+    
+    try:
+        response = requests.post(
+            url,
+            json=data,  # Automatically sets Content-Type: application/json
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print("✅ Credentials sent successfully!")
+            print(f"Response: {response.json()}")
+            return True
+        else:
+            print(f"❌ Error: {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Request failed: {e}")
+        return False
+    
+def login_with_smartcard(email, password, laravel_url="http://localhost"):
+    """
+    Auto-detect smartcard token and login to Laravel
+    """
+    # Path to Laravel's storage token file
+    token_path = r"C:\Users\Madjid\NG-Campus-Card\smartcard_token.txt"
+    # If you're using Laravel Sail/Homestead, adjust path: 
+    # token_path = "./storage/app/smartcard_token.txt"
+    
+    print("⏳ Waiting for smartcard button click...")
+    
+    while True:
+        if os.path.exists(token_path):
+            with open(token_path, 'r') as f:
+                session_token = f.read().strip()
+            
+            if session_token:
+                print(f"🔑 Token detected: {session_token[:20]}...")
+                os.remove(token_path)  # Clean up
+                
+                # Send credentials to Laravel
+                url = f"{laravel_url}/smartcard/callback"
+                data = {"session_token": session_token, "email": email, "password": password}
+                
+                try:
+                    response = requests.post(url, json=data, timeout=10)
+                    if response.status_code == 200:
+                        print("✅ Credentials sent successfully!")
+                        print(f"Response: {response.json()}")
+                        return True
+                    else:
+                        print(f"❌ Error: {response.status_code}")
+                        print(f"Response: {response.text}")
+                        return False
+                except Exception as e:
+                    print(f"❌ Request failed: {e}")
+                    return False
+        
+        time.sleep(1)
+
+def mifare_classic_detector():
+    """
+    Continuously checks for MIFARE Classic cards
+    Returns UID when card is detected
+    """
+    GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]  # MIFARE Classic UID command
+    
+    while True:
+        try:
+            # Connect to first reader
+            reader = readers()[0]
+            connection = reader.createConnection()
+            connection.connect()
+            
+            # Read UID
+            data, sw1, sw2 = connection.transmit(GET_UID)
+            
+            if sw1 == 0x90:  # Success
+                uid = toHexString(data)
+                print(f"✅ MIFARE Classic detected! UID: {uid}")
+                connection.disconnect()
+                return uid  # Exit with UID
+                
+        except:
+            pass
+            print("No card...    ", end='\r')  # Overwrites same line
+            
+        time.sleep(0.5)  # Check every 500ms
+
+
+if __name__ == '__main__':
+    
+
+    #card_uid = mifare_classic_detector()
+
+    reader_list = readers()
+    for reader in reader_list:
+        print(reader)
+    #reader_id = int(input("enter the reader id"))
+    reader = readers()[0]
+    connection = reader.createConnection()
+
+    connection.connect()
+
+    atr = connection.getATR()
+    print(toHexString(atr))
 
     mc = MifareClassicPCSC()
     mc.load_authentication_key()
@@ -87,7 +192,7 @@ if __name__ == '__main__':
 
         
 
-        email = "mohamed@gmail.com"
+        email = "bakiri@gmail.com"
         password = "12345678"
 
         email_data = mc.string_to_3_blocks(email)
@@ -132,18 +237,10 @@ if __name__ == '__main__':
         print("Email: " + email)
         print("Password: " + password)
 
-
-
-        url = "http://webauth.test/login"
-        payload = {
-            "email": email,
-            "password": password, 
-            }
-        
-        response = requests.post(url, json=payload)
-        print(response.text)
-        print(response.status_code)
-
+        EMAIL = email
+        PASSWORD = password
+        LARAVEL_URL = "http://webauth.test"
+        login_with_smartcard(EMAIL, PASSWORD, LARAVEL_URL)
 
 
 
@@ -156,62 +253,3 @@ if __name__ == '__main__':
             mc.connection.disconnect()
         except Exception:
             pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-'''# app.py
-from flask import Flask, jsonify, render_template_string
-
-app = Flask(__name__)
-
-
-
-@app.route("/")
-def home():
-    return jsonify(message=str(reader_list))
-
-@app.route("/api/hello")
-def api_hello():
-    return jsonify(message="Hello Zord")
-
-if __name__ == "__main__":
-    # dev server
-    app.run(host="0.0.0.0", port=5000, debug=True)'''
-
-
